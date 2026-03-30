@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Massa Deep Tracer</title>
+    
+    <link rel="icon" href="https://docs.massa.net/img/logo.svg" type="image/svg+xml">
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background-color: #0c0a09; color: #f8fafc; font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; }
+        .massa-gradient { background: linear-gradient(90deg, #ff4e4e 0%, #ff8a4e 100%); }
+        .massa-text-gradient { background: linear-gradient(90deg, #ff4e4e 0%, #ff8a4e 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #0c0a09; }
+        ::-webkit-scrollbar-thumb { background: #292524; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #44403c; }
+        
+        .tree-container { font-family: monospace; font-size: 0.9rem; }
+        details { margin-left: 1.25rem; border-left: 1px solid #292524; padding-left: 0.75rem; margin-top: 0.25rem; }
+        details[open] > summary { margin-bottom: 0.5rem; }
+        summary { cursor: pointer; padding: 0.4rem 0.5rem; border-radius: 0.25rem; list-style: none; display: flex; align-items: center; justify-content: space-between; transition: background-color 0.2s; }
+        summary::-webkit-details-marker { display: none; }
+        summary:hover { background-color: #1c1917; }
+        .node-caret::before { content: '▶ '; font-size: 0.7rem; color: #78716c; margin-right: 5px; display: inline-block; transition: transform 0.2s; }
+        details[open] > summary > .node-caret::before { transform: rotate(90deg); color: #ff4e4e; }
+        .leaf-node { padding: 0.4rem 0.5rem 0.4rem 1.5rem; display: flex; justify-content: space-between; border-radius: 0.25rem; }
+        .leaf-node:hover { background-color: #1c1917; }
+        
+        .text-staking { color: #f87171; }
+        .text-known { color: #60a5fa; }
+        .text-unidentified { color: #a8a29e; }
+        .text-unresolved { color: #fbbf24; }
+        .text-cycle { color: #ef4444; }
+        .text-root { color: #ff8a4e; font-weight: bold; }
+        
+        #statBar { font-variant-numeric: tabular-nums; }
+    </style>
+
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-WXH568V9F2"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-WXH568V9F2');
+    </script>
+</head>
+<body class="p-4 md:p-8 min-h-screen flex flex-col">
+
+<div id="toast" class="fixed bottom-6 right-6 bg-orange-500 text-white font-bold py-3 px-6 rounded-lg shadow-xl transform transition-all duration-300 translate-y-20 opacity-0 z-50 pointer-events-none">Copied!</div>
+
+<div class="max-w-7xl mx-auto w-full flex-grow">
+    <div class="flex justify-between items-start mb-1">
+        <div>
+            <h1 class="text-4xl font-extrabold massa-text-gradient tracking-tight">Massa Deep Origin Tracer</h1>
+            <p class="text-stone-400 mt-2 text-sm">Analyze Liquid MAS + Active Rolls. Recursively maps real historical inflows to known entities.</p>
+            <p class="text-orange-500/80 text-xs font-mono mt-1 mb-8">
+                ⚡ Data proudly powered by the <a href="https://massexplo.com" target="_blank" class="underline hover:text-orange-400 transition-colors">Massexplo.com</a> API. Huge thanks to their team!
+            </p>
+        </div>
+        <div id="nodeStatus" class="px-3 py-1 rounded-full bg-stone-800 text-[10px] font-bold text-stone-400 border border-stone-700 mt-2">CONNECTING...</div>
+    </div>
+
+    <div class="bg-stone-900 p-4 rounded-xl border border-stone-800 mb-6 shadow-lg">
+        <div class="flex flex-col md:flex-row gap-4 items-end">
+            <div class="flex-1 w-full">
+                <label class="block text-xs font-bold text-stone-500 mb-1 uppercase tracking-wider">Target Address (AU... / AS...)</label>
+                <input id="addrInput" type="text" value="AU121u5BvwhAofoBtU5MYNVntmHmnNxGy9Y897uhEwEbeY9v6CgXg" onclick="this.select()" onkeydown="if(event.key === 'Enter') manualTrace()" class="w-full p-4 rounded-lg bg-black border border-stone-700 focus:outline-none focus:border-orange-500 text-stone-100 font-mono text-sm transition">
+            </div>
+            <div class="flex flex-col md:flex-row gap-2 w-full md:w-auto">
+                <button onclick="goBack()" id="btnBack" class="hidden w-full md:w-auto bg-stone-800 hover:bg-stone-700 text-stone-300 font-bold py-4 px-6 rounded-lg transition whitespace-nowrap">&larr; Back</button>
+                <button onclick="stopTrace()" id="btnStop" class="hidden w-full md:w-auto bg-red-600 hover:bg-red-500 text-white font-bold py-4 px-8 rounded-lg shadow-lg transition whitespace-nowrap">Stop</button>
+                <button onclick="manualTrace()" id="btnTrace" class="w-full md:w-auto bg-orange-600 hover:bg-orange-500 text-white font-bold py-4 px-8 rounded-lg shadow-lg transition whitespace-nowrap">Trace Balance</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="loader" class="hidden bg-stone-900 p-5 rounded-xl border border-stone-800 mb-6 shadow-lg">
+        <div class="flex justify-between items-start mb-2">
+            <div class="flex-1 overflow-hidden pr-4">
+                <h3 class="text-orange-500 font-bold tracking-wide animate-pulse uppercase">Tracing Massa Origins…</h3>
+                <p id="loaderText" class="text-stone-400 font-mono text-xs mt-1 truncate">Initializing API connection…</p>
+            </div>
+            <p id="progressText" class="text-stone-300 font-mono text-sm font-bold text-right shrink-0">0%</p>
+        </div>
+        <div class="w-full bg-black rounded-full h-2.5 border border-stone-800 overflow-hidden mb-2">
+            <div id="progressBarFill" class="massa-gradient h-2.5 rounded-full transition-all duration-500" style="width:0%"></div>
+        </div>
+        <div id="statBar" class="flex flex-wrap gap-x-5 gap-y-1 text-xs text-stone-500 font-mono">
+            <span>🌿 Nodes Queried: <b id="sNodes" class="text-stone-300">0</b></span>
+            <span>🔁 API Retries: <b id="sRetries" class="text-stone-300">0</b></span>
+            <span>⏱ Elapsed: <b id="sElapsed" class="text-stone-300">0s</b></span>
+        </div>
+    </div>
+
+    <div id="resultsWrapper" class="hidden">
+        <div id="zeroBalancePrompt" class="hidden bg-stone-900 p-8 rounded-xl border border-yellow-600/50 shadow-lg text-center mb-6">
+            <div class="text-5xl mb-4">📭</div>
+            <h2 class="text-2xl font-bold text-stone-100 mb-2">Current Balance is 0 MAS</h2>
+            <p class="text-stone-400 mb-6">This wallet has no liquid balance and 0 active rolls. Would you like to trace its <b>historical inflows</b> instead?</p>
+            <button onclick="startTrace(true)" class="bg-yellow-600 hover:bg-yellow-500 text-white font-bold py-3 px-8 rounded-lg shadow-lg transition">Trace Historical Funds</button>
+        </div>
+
+        <div id="mainResultsBox" class="hidden flex flex-col gap-6">
+            <div class="bg-stone-900 p-6 rounded-xl border border-stone-800 shadow-lg text-center relative overflow-hidden">
+                <div class="absolute inset-0 opacity-10 massa-gradient blur-3xl"></div>
+                <p id="resTargetLabel" class="text-stone-400 text-xs font-bold uppercase tracking-widest mb-2 relative z-10">Total Effective Assets (Liquid + Rolls)</p>
+                <p id="resTotalBalance" class="text-4xl md:text-5xl font-extrabold massa-text-gradient relative z-10">—</p>
+                
+                <div class="mt-4 flex flex-col gap-2 items-center relative z-10">
+                    <div id="resSummaryBadge" class="inline-flex flex-wrap justify-center items-center gap-4 bg-black/50 border border-stone-700/50 rounded px-4 py-2 text-xs text-stone-400 font-mono">
+                        <span>Liquid: <b id="resLiquidTag" class="text-blue-400">0</b></span>
+                        <span>Rolls: <b id="resRollsTag" class="text-orange-400">0</b></span>
+                    </div>
+                    <div class="inline-flex flex-wrap justify-center items-center gap-4 bg-black/50 border border-stone-700/50 rounded px-4 py-2 text-xs text-stone-400 font-mono">
+                        <span>Direct Sources: <b id="resDirectTag" class="text-orange-400">0 MAS</b></span>
+                        <span>Intermediaries: <b id="resDeepTag" class="text-blue-400">0 MAS</b></span>
+                        <span>Oldest Traced Tx: <b id="resOldestTag" class="text-stone-200">—</b></span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div class="bg-stone-900 p-5 rounded-xl border-l-4 border-red-500 shadow-md">
+                    <p class="text-stone-400 text-xs font-bold uppercase tracking-wider mb-1">⛏ Staking Rewards</p>
+                    <p id="resMining" class="text-2xl font-bold text-stone-100">—</p>
+                </div>
+                <div class="bg-stone-900 p-5 rounded-xl border-l-4 border-blue-500 shadow-md">
+                    <p class="text-stone-400 text-xs font-bold uppercase tracking-wider mb-1">🏦 Known Sources</p>
+                    <p id="resKnown" class="text-2xl font-bold text-stone-100">—</p>
+                </div>
+                <div class="bg-stone-900 p-5 rounded-xl border-l-4 border-yellow-500 shadow-md">
+                    <p class="text-stone-400 text-xs font-bold uppercase tracking-wider mb-1">⚠ Unresolved / Genesis</p>
+                    <p id="resUnresolved" class="text-2xl font-bold text-stone-100">—</p>
+                </div>
+            </div>
+            
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div class="lg:col-span-2 bg-stone-900 rounded-xl p-6 border border-stone-800 shadow-md">
+                    <h3 class="text-lg font-bold mb-4 text-orange-400 border-b border-stone-800 pb-2 flex justify-between items-center">
+                        <span>Recursive Origin Tree</span>
+                        <span class="text-[10px] bg-red-900/30 text-red-400 px-2 py-1 rounded">CLICK WALLETS TO DIG DEEPER</span>
+                    </h3>
+                    <div id="treeContainer" class="tree-container overflow-x-auto min-h-[120px]"></div>
+                </div>
+                <div class="flex flex-col gap-5">
+                    <div class="bg-stone-900 rounded-xl p-5 border border-stone-800 shadow-md">
+                        <h3 class="text-base font-bold mb-3 text-blue-400 border-b border-stone-800 pb-2">Identified Entities</h3>
+                        <div id="knownList" class="space-y-2 max-h-56 overflow-y-auto font-mono text-sm pr-1"></div>
+                    </div>
+                    <div class="bg-stone-900 rounded-xl p-5 border border-stone-800 shadow-md flex-1">
+                        <h3 class="text-base font-bold mb-3 text-stone-300 border-b border-stone-800 pb-2">Unidentified Wallets</h3>
+                        <div id="unidentifiedList" class="space-y-2 max-h-80 overflow-y-auto font-mono text-xs pr-1"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="txHistoryBox" class="hidden bg-stone-900 rounded-xl p-6 border border-stone-800 shadow-md mt-6">
+            <h3 class="text-lg font-bold mb-4 text-orange-400 border-b border-stone-800 pb-2">Recent Transfers (History)</h3>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left text-sm font-mono text-stone-400">
+                    <thead class="text-xs text-stone-500 uppercase bg-black/50">
+                        <tr>
+                            <th class="px-4 py-3 rounded-tl-lg">Date</th>
+                            <th class="px-4 py-3">Counterparty</th>
+                            <th class="px-4 py-3 rounded-tr-lg">Amount</th>
+                        </tr>
+                    </thead>
+                    <tbody id="txHistoryTableBody" class="divide-y divide-stone-800/50">
+                        </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="mt-8 bg-stone-900 p-6 rounded-xl border border-stone-800 shadow-lg text-center">
+        <p class="text-stone-300 mb-2">If you find Massa Tracer helpful, consider supporting the project!</p>
+        <p class="text-sm font-mono text-stone-400">
+            <strong>Donate Massa:</strong> 
+            <span onclick="copyToClipboard('AU121u5BvwhAofoBtU5MYNVntmHmnNxGy9Y897uhEwEbeY9v6CgXg')" title="Click to copy address" class="text-orange-400 select-all cursor-pointer hover:text-orange-300 transition-colors">AU121u5BvwhAofoBtU5MYNVntmHmnNxGy9Y897uhEwEbeY9v6CgXg</span>
+        </p>
+    </div>
+</div>
+
+<script>
+// --- INTERNAL CONFIGURATION ---
+const MAX_TRACE_DEPTH = 3; 
+const MIN_MAS_TO_TRACE = 10;
+const MAS_PER_ROLL = 100;
+const MAX_RETRIES = 3;
+const CONCURRENCY = 3;
+
+const KNOWN_WALLETS = {
+    "AU1dYDdM65FJ9usFrWEMLiCgUFh2AoKFyQCsm1jR58k9WB55P8EU": "🏦 MEXC",
+    "AU1sxVCyy9E7f3nr1HSwbgNQH7SUuQUnb4BXxCzwMzYdRijZi1qY": "🏦 Bitget"
+};
+const RPC_ENDPOINTS = [ "https://mainnet.massa.net/api/v2" ];
+const EXPLORER_API = "https://api.massexplo.com/address";
+
+let isTracing = false, isHistoricalMode = false;
+let historyStack = [], globalVisited = new Set(), analysisCache = new Map();
+let globalSums = { staking: 0, known: {}, unknown: {}, unresolved: 0 };
+let totalTarget = 0, resolvedMas = 0, directMas = 0, oldestTxTime = Infinity;
+let eng = { nodes: 0, retries: 0 };
+let traceStart = 0, elapsedTimer = null;
+
+const fmt = n => (typeof n === 'number' ? n : 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+function copyToClipboard(text) {
+    navigator.clipboard.writeText(text).then(() => {
+        const t = document.getElementById('toast');
+        t.classList.remove('translate-y-20', 'opacity-0');
+        setTimeout(() => t.classList.add('translate-y-20', 'opacity-0'), 2500);
+    });
+}
+
+// --- NETWORK CALLS ---
+
+async function fetchMassaRPC(method, params = []) {
+    for (const url of RPC_ENDPOINTS) {
+        if (!isTracing && method !== "get_status") return null;
+        try {
+            const res = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ jsonrpc: "2.0", method, params, id: 1 })
+            });
+            if (!res.ok) { eng.retries++; refreshStats(); continue; }
+            const data = await res.json();
+            
+            const statusTag = document.getElementById('nodeStatus');
+            statusTag.innerText = 'PUBLIC MAINNET';
+            statusTag.className = 'px-3 py-1 rounded-full text-[10px] font-bold bg-blue-900/30 text-blue-400 border border-blue-800';
+            return data.result;
+        } catch (err) { eng.retries++; refreshStats(); }
+    }
+    throw new Error("RPC Disconnected");
+}
+
+async function fetchMassexploHistory(address) {
+    const directUrl = `${EXPLORER_API}/${address}/operations/mainnet`;
+    const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(directUrl)}`;
+
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        if (!isTracing) return { incoming: [], allTransfers: [] };
+        try {
+            document.getElementById('loaderText').textContent = `Querying history for ${address.substring(0,16)}…`;
+            
+            let data;
+            try {
+                const r = await fetch(directUrl);
+                if (!r.ok) throw new Error("Direct blocked");
+                data = await r.json();
+            } catch(e) {
+                const pr = await fetch(proxyUrl);
+                if (!pr.ok) throw new Error("Proxy blocked");
+                const proxyData = await pr.json();
+                data = JSON.parse(proxyData.contents);
+            }
+            
+            let ops = data.ops || [];
+            let incoming = [];
+            let allTransfers = []; 
+
+            for (let op of ops) {
+                if (op.status !== "EXECUTION_SUCCESS") continue;
+
+                const type = op.type || "";
+                if (type === "Transfer") {
+                    const sender = op.creatorAddress || "";
+                    const receiver = op.otherAddress || "";
+                    
+                    let amount = 0;
+                    if (op.amount && op.amount.Mantissa !== undefined) {
+                        amount = op.amount.Mantissa / Math.pow(10, op.amount.Scale || 9);
+                    }
+                    
+                    let timestamp = Date.now();
+                    if (op.timestamp) timestamp = op.timestamp * 1000;
+
+                    if (address === rootAddress && timestamp < oldestTxTime) {
+                        oldestTxTime = timestamp;
+                    }
+
+                    if (amount > 0) {
+                        allTransfers.push({ sender, receiver, amount, timestamp });
+                        if (receiver === address && sender !== address) {
+                            incoming.push({ sender, amount, timestamp });
+                        }
+                    }
+                }
+            }
+            return { incoming, allTransfers };
+        } catch (e) {
+            if (attempt < MAX_RETRIES) {
+                eng.retries++; refreshStats();
+                await sleep(500 * Math.pow(2, attempt));
+            } else return { incoming: [], allTransfers: [] };
+        }
+    }
+}
+
+async function analyseAddress(address) {
+    if (analysisCache.has(address)) return analysisCache.get(address);
+    const historyData = await fetchMassexploHistory(address);
+    const incomingOps = historyData.incoming;
+    
+    let netInflow = 0, knownMas = {}, senderMas = {}, senderDates = {};   
+    
+    for (const op of incomingOps) {
+        netInflow += op.amount;
+        const addrKey = KNOWN_WALLETS[op.sender] ? KNOWN_WALLETS[op.sender] : op.sender;
+        
+        if (KNOWN_WALLETS[op.sender]) {
+            knownMas[addrKey] = (knownMas[addrKey] || 0) + op.amount;
+        } else {
+            senderMas[addrKey] = (senderMas[addrKey] || 0) + op.amount;
+        }
+
+        if (!senderDates[addrKey] || op.timestamp > senderDates[addrKey]) {
+            senderDates[addrKey] = op.timestamp;
+        }
+    }
+    
+    const result = { netInflow, knownMas, senderMas, senderDates, allTransfers: historyData.allTransfers };
+    analysisCache.set(address, result); 
+    return result;
+}
+
+// --- STATE MANAGEMENT & UI NAVIGATION ---
+
+function manualTrace() {
+    historyStack = [];
+    isHistoricalMode = false;
+    startTrace();
+}
+
+function selectAndTrace(address) {
+    if(KNOWN_WALLETS[address]) { copyToClipboard(address); return; }
+    const currentAddr = document.getElementById('addrInput').value.trim();
+    if(currentAddr && currentAddr !== address) {
+        historyStack.push({ addr: currentAddr, isHist: isHistoricalMode });
+    }
+    document.getElementById('addrInput').value = address;
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    startTrace(); 
+}
+
+function goBack() {
+    if (historyStack.length === 0 || isTracing) return;
+    const prev = historyStack.pop();
+    document.getElementById('addrInput').value = prev.addr;
+    isHistoricalMode = prev.isHist;
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    startTrace();
+}
+
+function stopTrace() {
+    if (!isTracing) return;
+    isTracing = false;
+    document.getElementById('loaderText').textContent = 'Stopping… finishing open requests.';
+    document.getElementById('btnStop').disabled = true;
+    document.getElementById('btnStop').classList.add('opacity-50', 'cursor-not-allowed');
+}
+
+function refreshStats() {
+    document.getElementById('sNodes').textContent = eng.nodes;
+    document.getElementById('sRetries').textContent = eng.retries;
+}
+
+function renderHistoryTable(allTransfers, targetAddr) {
+    const tbody = document.getElementById('txHistoryTableBody');
+    const box = document.getElementById('txHistoryBox');
+    
+    if (!allTransfers || allTransfers.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="3" class="px-4 py-6 text-center italic text-stone-600">No recent transfers found for this wallet.</td></tr>';
+        box.classList.remove('hidden');
+        return;
+    }
+    
+    tbody.innerHTML = allTransfers.slice(0, 25).map(tx => {
+        const isIncoming = tx.receiver === targetAddr;
+        const dateStr = new Date(tx.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+        
+        const counterpartyAddr = isIncoming ? tx.sender : tx.receiver;
+        const cpLabel = KNOWN_WALLETS[counterpartyAddr] || `${counterpartyAddr.substring(0,10)}...${counterpartyAddr.slice(-6)}`;
+        
+        let cpHtml = '';
+        if (KNOWN_WALLETS[counterpartyAddr]) {
+            cpHtml = `<span class="text-blue-400 cursor-pointer" onclick="copyToClipboard('${counterpartyAddr}')" title="Copy Address">${cpLabel}</span>`;
+        } else {
+            cpHtml = `<span onclick="selectAndTrace('${counterpartyAddr}')" title="Trace this wallet" class="cursor-pointer text-orange-400 hover:text-white underline decoration-orange-500/30">${cpLabel}</span>`;
+        }
+        
+        const amtClass = isIncoming ? 'text-green-400' : 'text-stone-300';
+        const amtPrefix = isIncoming ? '+' : '-';
+        
+        return `<tr class="hover:bg-stone-800 transition">
+            <td class="px-4 py-3 whitespace-nowrap text-stone-500">${dateStr}</td>
+            <td class="px-4 py-3 whitespace-nowrap">${cpHtml} ${!isIncoming ? '<span class="text-[10px] text-stone-600 ml-1">(Out)</span>' : ''}</td>
+            <td class="px-4 py-3 whitespace-nowrap ${amtClass} font-bold text-right">${amtPrefix}${fmt(tx.amount)} MAS</td>
+        </tr>`;
+    }).join('');
+    
+    box.classList.remove('hidden');
+}
+
+function updateProgressBar() {
+    const pct = totalTarget > 0 ? Math.min(100, (resolvedMas / totalTarget) * 100) : 0;
+    document.getElementById('progressBarFill').style.width = `${pct}%`;
+    document.getElementById('progressText').textContent = `${pct.toFixed(1)}%`;
+
+    document.getElementById('resMining').innerHTML = `${fmt(globalSums.staking)} <span class="text-sm text-stone-500 font-normal">MAS</span>`;
+    const totalKnown = Object.values(globalSums.known).reduce((a, b) => a + b, 0);
+    document.getElementById('resKnown').innerHTML = `${fmt(totalKnown)} <span class="text-sm text-stone-500 font-normal">MAS</span>`;
+    document.getElementById('resUnresolved').innerHTML = `${fmt(globalSums.unresolved)} <span class="text-sm text-stone-500 font-normal">MAS</span>`;
+
+    document.getElementById('resDirectTag').textContent = `${fmt(directMas)} MAS`;
+    document.getElementById('resDeepTag').textContent = `${fmt(Math.max(0, resolvedMas - directMas))} MAS`;
+
+    const oldestTag = document.getElementById('resOldestTag');
+    if (oldestTxTime !== Infinity && oldestTxTime > 0) {
+        const d = new Date(oldestTxTime);
+        oldestTag.textContent = d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+    } else {
+        oldestTag.textContent = '—';
+    }
+
+    const kList = document.getElementById('knownList');
+    kList.innerHTML = Object.entries(globalSums.known).sort((a, b) => b[1] - a[1]).map(([k, v]) => 
+        `<div class="p-2 rounded flex justify-between border border-stone-700 bg-stone-800"><span class="text-blue-400 truncate mr-2">${k}</span><b class="text-stone-200 shrink-0">${fmt(v)}</b></div>`
+    ).join('') || '<span class="text-stone-500 italic text-xs">None found yet…</span>';
+
+    const uList = document.getElementById('unidentifiedList');
+    uList.innerHTML = Object.entries(globalSums.unknown).sort((a, b) => b[1] - a[1]).map(([k, v]) =>
+        `<div onclick="selectAndTrace('${k}')" title="Trace ${k}" class="p-2 rounded flex justify-between cursor-pointer hover:bg-stone-700 hover:ring-1 hover:ring-orange-500 transition border border-stone-800 bg-stone-900"><span class="text-orange-400 hover:text-white underline decoration-orange-400/50 truncate mr-2">${k.substring(0,18)}…${k.slice(-6)}</span><b class="text-stone-200 shrink-0">${fmt(v)}</b></div>`
+    ).join('') || '<span class="text-stone-500 italic text-xs">None found yet…</span>';
+}
+
+// --- TRACING ENGINE ---
+
+async function recursiveTrace(address, targetAmount, depth, maxDepth, minMas) {
+    if (!isTracing) return { label: address, amount: targetAmount, type: 'unresolved', info: 'Trace Aborted' };
+    if (globalVisited.has(address)) { return { label: address, amount: targetAmount, type: 'cycle', info: 'Loop Blocked' }; }
+    
+    if (depth > maxDepth || targetAmount < minMas) {
+        globalSums.unknown[address] = (globalSums.unknown[address] || 0) + targetAmount;
+        resolvedMas += targetAmount; updateProgressBar();
+        return { label: address, amount: targetAmount, type: 'unidentified', info: depth > maxDepth ? `Max Depth Limit` : `Below Min MAS`, isAddress: true };
+    }
+
+    globalVisited.add(address); eng.nodes++; refreshStats();
+    
+    const analysis = await analyseAddress(address);
+    let scale = 1.0, gapMas = 0.0;
+
+    if (!isTracing || analysis.netInflow <= 0) {
+        globalSums.staking += targetAmount; resolvedMas += targetAmount; updateProgressBar();
+        if (depth === 1) directMas += targetAmount;
+        return { label: "⛏ Staking Rewards", amount: targetAmount, type: 'staking', info: "Or Genesis Gap", isAddress: false };
+    }
+
+    if (analysis.netInflow > targetAmount * 1.0001) scale = targetAmount / analysis.netInflow;
+    else if (analysis.netInflow < targetAmount * 0.9999) gapMas = targetAmount - analysis.netInflow;
+
+    let children = [];
+
+    for (const [name, mas] of Object.entries(analysis.knownMas)) {
+        const scaled = mas * scale; if (scaled < 0.01) continue;
+        globalSums.known[name] = (globalSums.known[name] || 0) + scaled; resolvedMas += scaled;
+        if (depth === 1) directMas += scaled;
+        
+        let dateStr = analysis.senderDates[name] ? new Date(analysis.senderDates[name]).toLocaleDateString(undefined, {month:'short', day:'numeric', year:'numeric'}) : 'Exchange';
+        children.push({ label: `🏦 ${name}`, amount: scaled, type: 'known', info: dateStr, isAddress: false });
+    }
+
+    if (gapMas >= 0.01) {
+        globalSums.staking += gapMas; resolvedMas += gapMas;
+        if (depth === 1) directMas += gapMas;
+        children.push({ label: '⛏️ Staking Rewards', amount: gapMas, type: 'staking', info: 'Or Node Purged', isAddress: false });
+    }
+
+    const senders = Object.entries(analysis.senderMas).sort((a, b) => b[1] - a[1]);
+    const recurseTasks = [];
+
+    for (const [sAddr, sMas] of senders) {
+        const scaled = sMas * scale; if (scaled < 0.01) continue;
+
+        let dateStr = analysis.senderDates[sAddr] ? new Date(analysis.senderDates[sAddr]).toLocaleDateString(undefined, {month:'short', day:'numeric', year:'numeric'}) : 'Intermediary';
+
+        if (KNOWN_WALLETS[sAddr]) {
+            const name = KNOWN_WALLETS[sAddr]; globalSums.known[name] = (globalSums.known[name] || 0) + scaled; resolvedMas += scaled;
+            if (depth === 1) directMas += scaled;
+            children.push({ label: `🏦 ${name}`, amount: scaled, type: 'known', info: dateStr, isAddress: false });
+        } else if (scaled >= minMas && depth < maxDepth && isTracing) {
+            recurseTasks.push({ addr: sAddr, amount: scaled, dateStr });
+        } else {
+            globalSums.unknown[sAddr] = (globalSums.unknown[sAddr] || 0) + scaled; resolvedMas += scaled;
+            if (depth === 1) directMas += scaled;
+            children.push({ label: sAddr, amount: scaled, type: 'unidentified', info: depth >= maxDepth ? 'Max Depth Limit' : dateStr, isAddress: true });
+        }
+    }
+
+    for (let i = 0; i < recurseTasks.length; i += CONCURRENCY) {
+        if (!isTracing) break;
+        const batch = recurseTasks.slice(i, i + CONCURRENCY);
+        const results = await Promise.all(batch.map(({ addr, amount, dateStr }) => recursiveTrace(addr, amount, depth + 1, maxDepth, minMas).then(res => {
+            if (res.type === 'unidentified' && res.info.includes('Below Min MAS')) res.info = dateStr;
+            return res;
+        })));
+        children.push(...results); updateProgressBar();
+    }
+
+    children.sort((a, b) => b.amount - a.amount);
+    return { label: address, amount: targetAmount, type: depth === 1 ? 'root' : 'node', info: depth === 1 ? 'Target' : 'Intermediary', isAddress: !KNOWN_WALLETS[address], children: children.length ? children : null };
+}
+
+async function startTrace(forceHistory = false) {
+    if (isTracing) return;
+    const addr = document.getElementById('addrInput').value.trim();
+    if (!addr.startsWith('AU') && !addr.startsWith('AS')) return alert('Invalid Massa address');
+
+    const btnBack = document.getElementById('btnBack');
+    if (historyStack.length > 0) {
+        btnBack.classList.remove('hidden');
+        btnBack.innerText = `← Back to ${historyStack[historyStack.length - 1].addr.substring(0,8)}...`;
+    } else btnBack.classList.add('hidden');
+
+    isTracing = true;
+    if (forceHistory) isHistoricalMode = true;
+    
+    globalVisited = new Set(); analysisCache = new Map();
+    globalSums = { staking: 0, known: {}, unknown: {}, unresolved: 0 };
+    eng = { nodes: 0, retries: 0 }; resolvedMas = 0; traceStart = Date.now();
+    
+    directMas = 0;
+    rootAddress = addr;
+    oldestTxTime = Infinity;
+    
+    ['resultsWrapper', 'zeroBalancePrompt', 'mainResultsBox', 'btnTrace', 'txHistoryBox'].forEach(id => document.getElementById(id).classList.add('hidden'));
+    document.getElementById('loader').classList.remove('hidden');
+    document.getElementById('btnStop').classList.remove('hidden', 'opacity-50', 'cursor-not-allowed');
+    document.getElementById('btnStop').disabled = false;
+    
+    clearInterval(elapsedTimer);
+    elapsedTimer = setInterval(() => { document.getElementById('sElapsed').textContent = `${((Date.now() - traceStart) / 1000).toFixed(0)}s`; }, 500);
+
+    try {
+        const addrData = await fetchMassaRPC("get_addresses", [[addr]]);
+        if (!addrData || !addrData[0]) throw new Error("Wallet not found");
+
+        const d = addrData[0];
+        const liquid = parseFloat(d.final_balance || "0"), rolls = parseInt(d.final_roll_count || "0"); 
+        let currentBalance = liquid + (rolls * MAS_PER_ROLL);
+
+        document.getElementById('resLiquidTag').innerText = liquid.toLocaleString(undefined, {maximumFractionDigits: 2});
+        document.getElementById('resRollsTag').innerText = rolls.toLocaleString();
+
+        const rootAnalysis = await analyseAddress(addr);
+
+        if (currentBalance === 0 && !isHistoricalMode) {
+            isTracing = false; clearInterval(elapsedTimer);
+            ['loader', 'btnStop'].forEach(id => document.getElementById(id).classList.add('hidden'));
+            ['btnTrace', 'resultsWrapper', 'zeroBalancePrompt'].forEach(id => document.getElementById(id).classList.remove('hidden'));
+            renderHistoryTable(rootAnalysis.allTransfers, addr);
+            return;
+        }
+
+        if (isHistoricalMode) {
+            totalTarget = rootAnalysis.netInflow;
+            document.getElementById('resTargetLabel').innerText = "Historical Total Received";
+            if (totalTarget === 0) { 
+                finalise(null, "Wallet has zero incoming transfer history."); 
+                renderHistoryTable(rootAnalysis.allTransfers, addr);
+                return; 
+            }
+        } else {
+            totalTarget = currentBalance;
+            document.getElementById('resTargetLabel').innerText = "Total Effective Assets (Liquid + Rolls)";
+        }
+
+        document.getElementById('resTotalBalance').innerHTML = `${fmt(totalTarget)} <span class="text-xl md:text-2xl text-stone-400 font-normal">MAS</span>`;
+        document.getElementById('treeContainer').innerHTML = '<div class="text-orange-500 animate-pulse py-6 font-mono">Building trace hierarchy…</div>';
+        
+        document.getElementById('resultsWrapper').classList.remove('hidden');
+        document.getElementById('mainResultsBox').classList.remove('hidden');
+
+        renderHistoryTable(rootAnalysis.allTransfers, addr);
+
+        // MAX_TRACE_DEPTH and MIN_MAS_TO_TRACE are now hardcoded variables pulled from the config!
+        const rootTree = await recursiveTrace(addr, totalTarget, 1, MAX_TRACE_DEPTH, MIN_MAS_TO_TRACE);
+        finalise(rootTree);
+    } catch (err) { finalise(null, `Error: ${err.message}`); }
+}
+
+function finalise(tree, customMsg = null) {
+    isTracing = false; clearInterval(elapsedTimer);
+    document.getElementById('loader').classList.add('hidden');
+    document.getElementById('btnStop').classList.add('hidden');
+    document.getElementById('btnTrace').classList.remove('hidden');
+    if (tree || customMsg) {
+        document.getElementById('treeContainer').innerHTML = tree ? buildTreeHTML(tree, true) : `<div class="text-red-500 py-6 font-mono font-bold">${customMsg}</div>`;
+    }
+    updateProgressBar();
+}
+
+function buildTreeHTML(node, isRoot = false) {
+    if (!node) return '';
+    const masStr = `${fmt(node.amount)} MAS`;
+    
+    let labelHtml = `<span class="text-${node.type} truncate mr-4 font-bold">${node.label}</span>`;
+    if (node.isAddress) {
+        labelHtml = `<span onclick="selectAndTrace('${node.label}')" title="Click to Trace" class="cursor-pointer text-orange-400 hover:text-white underline decoration-orange-500/30 hover:decoration-white transition-all truncate pr-4">${node.label}</span>`;
+    }
+
+    if (!node.children || node.children.length === 0) {
+        return `<div class="leaf-node"><div class="flex items-center truncate mr-4">${labelHtml}</div><div class="flex space-x-4 shrink-0 text-right"><span class="text-stone-500 w-36 text-xs self-center">${node.info}</span><span class="text-stone-100 font-bold w-28">${masStr}</span></div></div>`;
+    }
+    return `<details ${isRoot ? 'open' : ''}><summary><div class="flex items-center truncate mr-4 overflow-hidden"><span class="node-caret"></span>${labelHtml}</div><div class="flex space-x-4 shrink-0 text-right"><span class="text-stone-500 w-36 text-xs self-center">${node.info}</span><span class="text-stone-100 font-bold w-28">${masStr}</span></div></summary>${node.children.map(c => buildTreeHTML(c)).join('')}</details>`;
+}
+
+fetchMassaRPC("get_status").catch(()=>{});
+</script>
+</body>
+</html>
