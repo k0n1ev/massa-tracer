@@ -4,9 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Massa Deep Tracer</title>
-    
     <link rel="icon" href="https://docs.massa.net/img/logo.svg" type="image/svg+xml">
-    
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body { background-color: #0c0a09; color: #f8fafc; font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; }
@@ -16,7 +14,7 @@
         ::-webkit-scrollbar-track { background: #0c0a09; }
         ::-webkit-scrollbar-thumb { background: #292524; border-radius: 4px; }
         ::-webkit-scrollbar-thumb:hover { background: #44403c; }
-        
+
         .tree-container { font-family: monospace; font-size: 0.9rem; }
         details { margin-left: 1.25rem; border-left: 1px solid #292524; padding-left: 0.75rem; margin-top: 0.25rem; }
         details[open] > summary { margin-bottom: 0.5rem; }
@@ -27,15 +25,23 @@
         details[open] > summary > .node-caret::before { transform: rotate(90deg); color: #ff4e4e; }
         .leaf-node { padding: 0.4rem 0.5rem 0.4rem 1.5rem; display: flex; justify-content: space-between; border-radius: 0.25rem; }
         .leaf-node:hover { background-color: #1c1917; }
-        
+
         .text-staking { color: #f87171; }
         .text-known { color: #60a5fa; }
         .text-unidentified { color: #a8a29e; }
         .text-unresolved { color: #fbbf24; }
         .text-cycle { color: #ef4444; }
         .text-root { color: #ff8a4e; font-weight: bold; }
-        
+
         #statBar { font-variant-numeric: tabular-nums; }
+
+        /* Live log lines inside loader */
+        #debugLog { max-height: 72px; overflow-y: auto; scrollbar-width: thin; }
+        .log-line  { line-height: 1.6; font-size: 0.72rem; font-family: monospace; }
+        .log-ok    { color: #4ade80; }
+        .log-warn  { color: #fbbf24; }
+        .log-err   { color: #f87171; }
+        .log-info  { color: #78716c; }
     </style>
 
     <script async src="https://www.googletagmanager.com/gtag/js?id=G-WXH568V9F2"></script>
@@ -80,7 +86,7 @@
         <div class="flex justify-between items-start mb-2">
             <div class="flex-1 overflow-hidden pr-4">
                 <h3 class="text-orange-500 font-bold tracking-wide animate-pulse uppercase">Tracing Massa Origins…</h3>
-                <p id="loaderText" class="text-stone-400 font-mono text-xs mt-1 truncate">Initializing API connection…</p>
+                <div id="debugLog" class="mt-1"></div>
             </div>
             <p id="progressText" class="text-stone-300 font-mono text-sm font-bold text-right shrink-0">0%</p>
         </div>
@@ -89,8 +95,10 @@
         </div>
         <div id="statBar" class="flex flex-wrap gap-x-5 gap-y-1 text-xs text-stone-500 font-mono">
             <span>🌿 Nodes Queried: <b id="sNodes" class="text-stone-300">0</b></span>
+            <span>⏱ Timeouts: <b id="sTimeouts" class="text-yellow-400">0</b></span>
             <span>🔁 API Retries: <b id="sRetries" class="text-stone-300">0</b></span>
             <span>⏱ Elapsed: <b id="sElapsed" class="text-stone-300">0s</b></span>
+            <span>📋 Queue: <b id="sQueue" class="text-stone-300">0</b></span>
         </div>
     </div>
 
@@ -107,9 +115,9 @@
                 <div class="absolute inset-0 opacity-10 massa-gradient blur-3xl"></div>
                 <p id="resTargetLabel" class="text-stone-400 text-xs font-bold uppercase tracking-widest mb-2 relative z-10">Total Effective Assets (Liquid + Rolls)</p>
                 <p id="resTotalBalance" class="text-4xl md:text-5xl font-extrabold massa-text-gradient relative z-10">—</p>
-                
+
                 <div class="mt-4 flex flex-col gap-2 items-center relative z-10">
-                    <div id="resSummaryBadge" class="inline-flex flex-wrap justify-center items-center gap-4 bg-black/50 border border-stone-700/50 rounded px-4 py-2 text-xs text-stone-400 font-mono">
+                    <div class="inline-flex flex-wrap justify-center items-center gap-4 bg-black/50 border border-stone-700/50 rounded px-4 py-2 text-xs text-stone-400 font-mono">
                         <span>Liquid: <b id="resLiquidTag" class="text-blue-400">0</b></span>
                         <span>Rolls: <b id="resRollsTag" class="text-orange-400">0</b></span>
                     </div>
@@ -135,7 +143,7 @@
                     <p id="resUnresolved" class="text-2xl font-bold text-stone-100">—</p>
                 </div>
             </div>
-            
+
             <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <div class="lg:col-span-2 bg-stone-900 rounded-xl p-6 border border-stone-800 shadow-md">
                     <h3 class="text-lg font-bold mb-4 text-orange-400 border-b border-stone-800 pb-2 flex justify-between items-center">
@@ -158,19 +166,28 @@
         </div>
 
         <div id="txHistoryBox" class="hidden bg-stone-900 rounded-xl p-6 border border-stone-800 shadow-md mt-6">
-            <h3 class="text-lg font-bold mb-4 text-orange-400 border-b border-stone-800 pb-2">Recent Transfers (History)</h3>
+            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-4">
+                <h3 class="text-lg font-bold text-orange-400 border-b border-stone-800 pb-2">Recent Transfers</h3>
+                <div class="flex space-x-2 text-xs font-mono">
+                    <button onclick="setTxFilter('all')" id="fltAll" class="px-3 py-1 rounded bg-orange-600 text-white transition-colors">All</button>
+                    <button onclick="setTxFilter('in')"  id="fltIn"  class="px-3 py-1 rounded bg-stone-800 text-stone-400 hover:bg-stone-700 transition-colors">Incoming</button>
+                    <button onclick="setTxFilter('out')" id="fltOut" class="px-3 py-1 rounded bg-stone-800 text-stone-400 hover:bg-stone-700 transition-colors">Outgoing</button>
+                </div>
+            </div>
             <div class="overflow-x-auto">
                 <table class="w-full text-left text-sm font-mono text-stone-400">
                     <thead class="text-xs text-stone-500 uppercase bg-black/50">
                         <tr>
                             <th class="px-4 py-3 rounded-tl-lg">Date</th>
                             <th class="px-4 py-3">Counterparty</th>
-                            <th class="px-4 py-3 rounded-tr-lg">Amount</th>
+                            <th class="px-4 py-3 rounded-tr-lg text-right">Amount</th>
                         </tr>
                     </thead>
-                    <tbody id="txHistoryTableBody" class="divide-y divide-stone-800/50">
-                        </tbody>
+                    <tbody id="txHistoryTableBody" class="divide-y divide-stone-800/50"></tbody>
                 </table>
+            </div>
+            <div class="mt-4 text-center">
+                <button id="btnLoadMoreTx" onclick="loadMoreTx()" class="hidden px-6 py-2 bg-stone-800 hover:bg-stone-700 text-stone-300 rounded-lg text-xs font-bold transition shadow-sm border border-stone-700">↓ Load More</button>
             </div>
         </div>
     </div>
@@ -178,36 +195,63 @@
     <div class="mt-8 bg-stone-900 p-6 rounded-xl border border-stone-800 shadow-lg text-center">
         <p class="text-stone-300 mb-2">If you find Massa Tracer helpful, consider supporting the project!</p>
         <p class="text-sm font-mono text-stone-400">
-            <strong>Donate Massa:</strong> 
+            <strong>Donate Massa:</strong>
             <span onclick="copyToClipboard('AU121u5BvwhAofoBtU5MYNVntmHmnNxGy9Y897uhEwEbeY9v6CgXg')" title="Click to copy address" class="text-orange-400 select-all cursor-pointer hover:text-orange-300 transition-colors">AU121u5BvwhAofoBtU5MYNVntmHmnNxGy9Y897uhEwEbeY9v6CgXg</span>
         </p>
     </div>
 </div>
 
 <script>
-// --- INTERNAL CONFIGURATION ---
-const MAX_TRACE_DEPTH = 3; 
-const MIN_MAS_TO_TRACE = 10;
-const MAS_PER_ROLL = 100;
-const MAX_RETRIES = 3;
-const CONCURRENCY = 3;
+// ─── CONFIG ───────────────────────────────────────────────────────────────────
+const CFG = {
+    MAX_DEPTH:         3,
+    MIN_MAS:           10,
+    MAS_PER_ROLL:      100,
+    CONCURRENCY:       3,
+    MAX_PAGES_ROOT:    8,
+    MAX_PAGES_NODE:    2,
+    FETCH_TIMEOUT_MS:  7000,   // per HTTP request
+    NODE_TIMEOUT_MS:   25000,  // hard cap per address analysis — prevents stalling
+    BATCH_TIMEOUT_MS:  60000,  // hard cap per concurrent batch
+    RETRY_MAX:         2,
+    RETRY_BASE_MS:     600,
+};
 
 const KNOWN_WALLETS = {
     "AU1dYDdM65FJ9usFrWEMLiCgUFh2AoKFyQCsm1jR58k9WB55P8EU": "🏦 MEXC",
-    "AU1sxVCyy9E7f3nr1HSwbgNQH7SUuQUnb4BXxCzwMzYdRijZi1qY": "🏦 Bitget"
+    "AU1sxVCyy9E7f3nr1HSwbgNQH7SUuQUnb4BXxCzwMzYdRijZi1qY": "🏦 Bitget",
 };
-const RPC_ENDPOINTS = [ "https://mainnet.massa.net/api/v2" ];
+
+const RPC_ENDPOINT = "https://mainnet.massa.net/api/v2";
 const EXPLORER_API = "https://api.massexplo.com/address";
 
+// ─── STATE ────────────────────────────────────────────────────────────────────
 let isTracing = false, isHistoricalMode = false;
 let historyStack = [], globalVisited = new Set(), analysisCache = new Map();
 let globalSums = { staking: 0, known: {}, unknown: {}, unresolved: 0 };
 let totalTarget = 0, resolvedMas = 0, directMas = 0, oldestTxTime = Infinity;
-let eng = { nodes: 0, retries: 0 };
+let eng = { nodes: 0, retries: 0, timeouts: 0, queue: 0 };
 let traceStart = 0, elapsedTimer = null;
+let rootAddress = "";
+let sessionAbort = null;
 
-const fmt = n => (typeof n === 'number' ? n : 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+// TX table state
+let currentTransfers = [], currentTxFilter = 'all', currentTxLimit = 15;
+
+// ─── HELPERS ──────────────────────────────────────────────────────────────────
+const fmt   = n => (+n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+function log(msg, cls = 'log-info') {
+    const el = document.getElementById('debugLog');
+    if (!el) return;
+    const line = document.createElement('div');
+    line.className = `log-line ${cls}`;
+    line.textContent = msg;
+    el.appendChild(line);
+    while (el.children.length > 5) el.removeChild(el.firstChild);
+    el.scrollTop = el.scrollHeight;
+}
 
 function copyToClipboard(text) {
     navigator.clipboard.writeText(text).then(() => {
@@ -217,263 +261,297 @@ function copyToClipboard(text) {
     });
 }
 
-// --- NETWORK CALLS ---
+// Race a promise against a timeout — always resolves with fallback, never hangs
+function withTimeout(promise, ms, fallback, label = '') {
+    return Promise.race([
+        promise,
+        new Promise(resolve => setTimeout(() => {
+            eng.timeouts++;
+            refreshStats();
+            log(`⏱ Timeout (${ms / 1000}s)${label ? ': ' + label : ''}`, 'log-warn');
+            resolve(fallback);
+        }, ms))
+    ]);
+}
+
+// ─── NETWORK ──────────────────────────────────────────────────────────────────
+async function fetchSafe(url, opts = {}, timeoutMs = CFG.FETCH_TIMEOUT_MS) {
+    const ctrl = new AbortController();
+    // Link to session abort so Stop immediately cancels all in-flight fetches
+    const onAbort = () => ctrl.abort();
+    if (sessionAbort) sessionAbort.signal.addEventListener('abort', onAbort, { once: true });
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+        const res = await fetch(url, { ...opts, signal: ctrl.signal });
+        clearTimeout(timer);
+        return res;
+    } catch (e) {
+        clearTimeout(timer);
+        throw e;
+    } finally {
+        if (sessionAbort) sessionAbort.signal.removeEventListener('abort', onAbort);
+    }
+}
 
 async function fetchMassaRPC(method, params = []) {
-    for (const url of RPC_ENDPOINTS) {
-        if (!isTracing && method !== "get_status") return null;
-        try {
-            const res = await fetch(url, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ jsonrpc: "2.0", method, params, id: 1 })
-            });
-            if (!res.ok) { eng.retries++; refreshStats(); continue; }
-            const data = await res.json();
-            
-            const statusTag = document.getElementById('nodeStatus');
-            statusTag.innerText = 'PUBLIC MAINNET';
-            statusTag.className = 'px-3 py-1 rounded-full text-[10px] font-bold bg-blue-900/30 text-blue-400 border border-blue-800';
-            return data.result;
-        } catch (err) { eng.retries++; refreshStats(); }
-    }
-    throw new Error("RPC Disconnected");
+    if (!isTracing && method !== "get_status") return null;
+    try {
+        const res = await fetchSafe(RPC_ENDPOINT, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ jsonrpc: "2.0", method, params, id: 1 })
+        }, 5000);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const el = document.getElementById('nodeStatus');
+        el.textContent = 'PUBLIC MAINNET';
+        el.className = 'px-3 py-1 rounded-full text-[10px] font-bold bg-blue-900/30 text-blue-400 border border-blue-800';
+        return data.result;
+    } catch (e) { throw e; }
 }
 
-async function fetchMassexploHistory(address) {
-    const directUrl = `${EXPLORER_API}/${address}/operations/mainnet`;
-    const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(directUrl)}`;
+async function fetchPage(address, creatorCursor, otherCursor) {
+    const base = `${EXPLORER_API}/${address}/operations/mainnet`;
+    const parts = [];
+    if (creatorCursor) parts.push(`creator=${encodeURIComponent(creatorCursor)}`);
+    if (otherCursor)   parts.push(`other=${encodeURIComponent(otherCursor)}`);
+    const url = parts.length ? `${base}?${parts.join('&')}` : base;
 
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-        if (!isTracing) return { incoming: [], allTransfers: [] };
+    for (let attempt = 0; attempt <= CFG.RETRY_MAX; attempt++) {
+        if (!isTracing) return null;
         try {
-            document.getElementById('loaderText').textContent = `Querying history for ${address.substring(0,16)}…`;
-            
-            let data;
-            try {
-                const r = await fetch(directUrl);
-                if (!r.ok) throw new Error("Direct blocked");
-                data = await r.json();
-            } catch(e) {
-                const pr = await fetch(proxyUrl);
-                if (!pr.ok) throw new Error("Proxy blocked");
-                const proxyData = await pr.json();
-                data = JSON.parse(proxyData.contents);
-            }
-            
-            let ops = data.ops || [];
-            let incoming = [];
-            let allTransfers = []; 
-
-            for (let op of ops) {
-                if (op.status !== "EXECUTION_SUCCESS") continue;
-
-                const type = op.type || "";
-                if (type === "Transfer") {
-                    const sender = op.creatorAddress || "";
-                    const receiver = op.otherAddress || "";
-                    
-                    let amount = 0;
-                    if (op.amount && op.amount.Mantissa !== undefined) {
-                        amount = op.amount.Mantissa / Math.pow(10, op.amount.Scale || 9);
-                    }
-                    
-                    let timestamp = Date.now();
-                    if (op.timestamp) timestamp = op.timestamp * 1000;
-
-                    if (address === rootAddress && timestamp < oldestTxTime) {
-                        oldestTxTime = timestamp;
-                    }
-
-                    if (amount > 0) {
-                        allTransfers.push({ sender, receiver, amount, timestamp });
-                        if (receiver === address && sender !== address) {
-                            incoming.push({ sender, amount, timestamp });
-                        }
-                    }
+            const res = await fetchSafe(url, {}, CFG.FETCH_TIMEOUT_MS);
+            if (!res.ok) {
+                if (res.status === 429) {
+                    const wait = 1500 * (attempt + 1);
+                    log(`⚠ Rate limited — waiting ${wait / 1000}s…`, 'log-warn');
+                    await sleep(wait);
+                    eng.retries++; refreshStats(); continue;
                 }
+                throw new Error(`HTTP ${res.status}`);
             }
-            return { incoming, allTransfers };
+            return await res.json();
         } catch (e) {
-            if (attempt < MAX_RETRIES) {
-                eng.retries++; refreshStats();
-                await sleep(500 * Math.pow(2, attempt));
-            } else return { incoming: [], allTransfers: [] };
+            if (!isTracing) return null;
+            if (attempt === CFG.RETRY_MAX) {
+                log(`✗ Page failed (${address.substring(0, 10)}…)`, 'log-warn');
+                return null;
+            }
+            eng.retries++; refreshStats();
+            await sleep(CFG.RETRY_BASE_MS * Math.pow(2, attempt));
         }
     }
+    return null;
 }
 
+// ─── HISTORY FETCH ────────────────────────────────────────────────────────────
+async function fetchMassexploHistory(address) {
+    const maxPages = (address === rootAddress) ? CFG.MAX_PAGES_ROOT : CFG.MAX_PAGES_NODE;
+    let allIncoming = [], allTransfers = [];
+    let creatorCursor = null, otherCursor = null;
+    let prevCursorKey = '';
+
+    for (let page = 0; page < maxPages && isTracing; page++) {
+        log(`Fetching history page ${page + 1}/${maxPages} for ${address.substring(0, 10)}…`);
+
+        const data = await fetchPage(address, creatorCursor, otherCursor);
+        if (!data) break;
+
+        const ops = Array.isArray(data.ops) ? data.ops : [];
+        for (const op of ops) {
+            if (op.status !== "EXECUTION_SUCCESS" || op.type !== "Transfer") continue;
+            const sender   = op.creatorAddress || '';
+            const receiver = op.otherAddress || '';
+            let amount = 0;
+            if (op.amount?.Mantissa !== undefined)
+                amount = op.amount.Mantissa / Math.pow(10, op.amount.Scale ?? 9);
+            if (amount <= 0) continue;
+            const ts = op.timestamp ? op.timestamp * 1000 : Date.now();
+            if (address === rootAddress && ts < oldestTxTime) oldestTxTime = ts;
+            allTransfers.push({ sender, receiver, amount, timestamp: ts });
+            if (receiver === address && sender !== address)
+                allIncoming.push({ sender, amount, timestamp: ts });
+        }
+
+        // FIX: stringify cursors for reliable equality comparison (objects would always be !==)
+        const nc = data.nextCursor;
+        if (!nc) break;
+        const nextCreator = (nc.creator && nc.creator !== false) ? String(nc.creator) : null;
+        const nextOther   = (nc.other   && nc.other   !== false) ? String(nc.other)   : null;
+        if (!nextCreator && !nextOther) break;
+
+        const cursorKey = `${nextCreator}|${nextOther}`;
+        if (cursorKey === prevCursorKey) {
+            log('⚠ Cursor stalled — stopping pagination', 'log-warn');
+            break;
+        }
+        prevCursorKey = cursorKey;
+        creatorCursor = nextCreator;
+        otherCursor   = nextOther;
+
+        await sleep(250);
+    }
+
+    return { incoming: allIncoming, allTransfers };
+}
+
+// Cached wrapper — NODE_TIMEOUT ensures we never hang on a slow wallet
 async function analyseAddress(address) {
     if (analysisCache.has(address)) return analysisCache.get(address);
-    const historyData = await fetchMassexploHistory(address);
-    const incomingOps = historyData.incoming;
-    
-    let netInflow = 0, knownMas = {}, senderMas = {}, senderDates = {};   
-    
-    for (const op of incomingOps) {
-        netInflow += op.amount;
-        const addrKey = KNOWN_WALLETS[op.sender] ? KNOWN_WALLETS[op.sender] : op.sender;
-        
-        if (KNOWN_WALLETS[op.sender]) {
-            knownMas[addrKey] = (knownMas[addrKey] || 0) + op.amount;
-        } else {
-            senderMas[addrKey] = (senderMas[addrKey] || 0) + op.amount;
-        }
 
-        if (!senderDates[addrKey] || op.timestamp > senderDates[addrKey]) {
-            senderDates[addrKey] = op.timestamp;
+    const label = address.substring(0, 14) + '…';
+    const histPromise = fetchMassexploHistory(address).then(({ incoming, allTransfers }) => {
+        let netInflow = 0, knownMas = {}, senderMas = {}, senderDates = {};
+        for (const op of incoming) {
+            netInflow += op.amount;
+            const key = KNOWN_WALLETS[op.sender] || op.sender;
+            if (KNOWN_WALLETS[op.sender]) knownMas[key] = (knownMas[key] || 0) + op.amount;
+            else senderMas[key] = (senderMas[key] || 0) + op.amount;
+            if (!senderDates[key] || op.timestamp > senderDates[key]) senderDates[key] = op.timestamp;
         }
-    }
-    
-    const result = { netInflow, knownMas, senderMas, senderDates, allTransfers: historyData.allTransfers };
-    analysisCache.set(address, result); 
+        return { netInflow, knownMas, senderMas, senderDates, allTransfers };
+    });
+
+    const EMPTY = { netInflow: 0, knownMas: {}, senderMas: {}, senderDates: {}, allTransfers: [] };
+    const result = await withTimeout(histPromise, CFG.NODE_TIMEOUT_MS, EMPTY, label);
+    analysisCache.set(address, result);
     return result;
 }
 
-// --- STATE MANAGEMENT & UI NAVIGATION ---
-
-function manualTrace() {
-    historyStack = [];
-    isHistoricalMode = false;
-    startTrace();
+// ─── TX TABLE ─────────────────────────────────────────────────────────────────
+function setTxFilter(filter) {
+    currentTxFilter = filter; currentTxLimit = 15;
+    ['fltAll', 'fltIn', 'fltOut'].forEach(id =>
+        document.getElementById(id).className = 'px-3 py-1 rounded bg-stone-800 text-stone-400 hover:bg-stone-700 transition-colors');
+    const activeId = filter === 'all' ? 'fltAll' : filter === 'in' ? 'fltIn' : 'fltOut';
+    document.getElementById(activeId).className = 'px-3 py-1 rounded bg-orange-600 text-white transition-colors';
+    renderHistoryTable();
 }
 
-function selectAndTrace(address) {
-    if(KNOWN_WALLETS[address]) { copyToClipboard(address); return; }
-    const currentAddr = document.getElementById('addrInput').value.trim();
-    if(currentAddr && currentAddr !== address) {
-        historyStack.push({ addr: currentAddr, isHist: isHistoricalMode });
-    }
-    document.getElementById('addrInput').value = address;
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-    startTrace(); 
-}
+function loadMoreTx() { currentTxLimit += 25; renderHistoryTable(); }
 
-function goBack() {
-    if (historyStack.length === 0 || isTracing) return;
-    const prev = historyStack.pop();
-    document.getElementById('addrInput').value = prev.addr;
-    isHistoricalMode = prev.isHist;
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-    startTrace();
-}
+function renderHistoryTable() {
+    const tbody       = document.getElementById('txHistoryTableBody');
+    const box         = document.getElementById('txHistoryBox');
+    const loadMoreBtn = document.getElementById('btnLoadMoreTx');
 
-function stopTrace() {
-    if (!isTracing) return;
-    isTracing = false;
-    document.getElementById('loaderText').textContent = 'Stopping… finishing open requests.';
-    document.getElementById('btnStop').disabled = true;
-    document.getElementById('btnStop').classList.add('opacity-50', 'cursor-not-allowed');
-}
-
-function refreshStats() {
-    document.getElementById('sNodes').textContent = eng.nodes;
-    document.getElementById('sRetries').textContent = eng.retries;
-}
-
-function renderHistoryTable(allTransfers, targetAddr) {
-    const tbody = document.getElementById('txHistoryTableBody');
-    const box = document.getElementById('txHistoryBox');
-    
-    if (!allTransfers || allTransfers.length === 0) {
+    if (!currentTransfers || !currentTransfers.length) {
         tbody.innerHTML = '<tr><td colspan="3" class="px-4 py-6 text-center italic text-stone-600">No recent transfers found for this wallet.</td></tr>';
         box.classList.remove('hidden');
+        loadMoreBtn.classList.add('hidden');
         return;
     }
-    
-    tbody.innerHTML = allTransfers.slice(0, 25).map(tx => {
-        const isIncoming = tx.receiver === targetAddr;
-        const dateStr = new Date(tx.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-        
-        const counterpartyAddr = isIncoming ? tx.sender : tx.receiver;
-        const cpLabel = KNOWN_WALLETS[counterpartyAddr] || `${counterpartyAddr.substring(0,10)}...${counterpartyAddr.slice(-6)}`;
-        
-        let cpHtml = '';
-        if (KNOWN_WALLETS[counterpartyAddr]) {
-            cpHtml = `<span class="text-blue-400 cursor-pointer" onclick="copyToClipboard('${counterpartyAddr}')" title="Copy Address">${cpLabel}</span>`;
-        } else {
-            cpHtml = `<span onclick="selectAndTrace('${counterpartyAddr}')" title="Trace this wallet" class="cursor-pointer text-orange-400 hover:text-white underline decoration-orange-500/30">${cpLabel}</span>`;
-        }
-        
-        const amtClass = isIncoming ? 'text-green-400' : 'text-stone-300';
-        const amtPrefix = isIncoming ? '+' : '-';
-        
-        return `<tr class="hover:bg-stone-800 transition">
-            <td class="px-4 py-3 whitespace-nowrap text-stone-500">${dateStr}</td>
-            <td class="px-4 py-3 whitespace-nowrap">${cpHtml} ${!isIncoming ? '<span class="text-[10px] text-stone-600 ml-1">(Out)</span>' : ''}</td>
-            <td class="px-4 py-3 whitespace-nowrap ${amtClass} font-bold text-right">${amtPrefix}${fmt(tx.amount)} MAS</td>
-        </tr>`;
-    }).join('');
-    
+
+    let filtered = currentTransfers.filter(tx => {
+        if (currentTxFilter === 'in')  return tx.receiver === rootAddress;
+        if (currentTxFilter === 'out') return tx.sender   === rootAddress;
+        return true;
+    });
+    filtered.sort((a, b) => b.timestamp - a.timestamp);
+
+    const toShow = filtered.slice(0, currentTxLimit);
+    (currentTxLimit < filtered.length) ? loadMoreBtn.classList.remove('hidden') : loadMoreBtn.classList.add('hidden');
+
+    if (!toShow.length) {
+        tbody.innerHTML = '<tr><td colspan="3" class="px-4 py-6 text-center italic text-stone-600">No transfers match this filter.</td></tr>';
+    } else {
+        tbody.innerHTML = toShow.map(tx => {
+            const isIncoming = tx.receiver === rootAddress;
+            const dateStr    = new Date(tx.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+            const cp         = isIncoming ? tx.sender : tx.receiver;
+            const cpLabel    = KNOWN_WALLETS[cp] || `${cp.substring(0, 10)}...${cp.slice(-6)}`;
+            const cpHtml     = KNOWN_WALLETS[cp]
+                ? `<span class="text-blue-400 cursor-pointer hover:underline" onclick="copyToClipboard('${cp}')" title="Copy Address">${cpLabel}</span>`
+                : `<span onclick="selectAndTrace('${cp}')" title="Trace this wallet" class="cursor-pointer text-orange-400 hover:text-white underline decoration-orange-500/30">${cpLabel}</span>`;
+            const amtClass   = isIncoming ? 'text-green-400' : 'text-red-400';
+            const amtPrefix  = isIncoming ? '+' : '-';
+            const badgeHtml  = isIncoming
+                ? '<span class="text-[10px] bg-green-900/30 text-green-400 px-1 py-0.5 rounded ml-2 uppercase font-bold">In</span>'
+                : '<span class="text-[10px] bg-red-900/30 text-red-400 px-1 py-0.5 rounded ml-2 uppercase font-bold">Out</span>';
+            return `<tr class="hover:bg-stone-800 transition border-b border-stone-800/50 last:border-0">
+                <td class="px-4 py-3 whitespace-nowrap text-stone-500">${dateStr}</td>
+                <td class="px-4 py-3 whitespace-nowrap">${cpHtml} ${badgeHtml}</td>
+                <td class="px-4 py-3 whitespace-nowrap ${amtClass} font-bold text-right">${amtPrefix}${fmt(tx.amount)} MAS</td>
+            </tr>`;
+        }).join('');
+    }
     box.classList.remove('hidden');
+}
+
+// ─── STATS REFRESH ────────────────────────────────────────────────────────────
+function refreshStats() {
+    document.getElementById('sNodes').textContent    = eng.nodes;
+    document.getElementById('sRetries').textContent  = eng.retries;
+    document.getElementById('sTimeouts').textContent = eng.timeouts;
+    document.getElementById('sQueue').textContent    = eng.queue;
 }
 
 function updateProgressBar() {
     const pct = totalTarget > 0 ? Math.min(100, (resolvedMas / totalTarget) * 100) : 0;
     document.getElementById('progressBarFill').style.width = `${pct}%`;
-    document.getElementById('progressText').textContent = `${pct.toFixed(1)}%`;
+    document.getElementById('progressText').textContent    = `${pct.toFixed(1)}%`;
 
-    document.getElementById('resMining').innerHTML = `${fmt(globalSums.staking)} <span class="text-sm text-stone-500 font-normal">MAS</span>`;
+    document.getElementById('resMining').innerHTML     = `${fmt(globalSums.staking)} <span class="text-sm text-stone-500 font-normal">MAS</span>`;
     const totalKnown = Object.values(globalSums.known).reduce((a, b) => a + b, 0);
-    document.getElementById('resKnown').innerHTML = `${fmt(totalKnown)} <span class="text-sm text-stone-500 font-normal">MAS</span>`;
+    document.getElementById('resKnown').innerHTML      = `${fmt(totalKnown)} <span class="text-sm text-stone-500 font-normal">MAS</span>`;
     document.getElementById('resUnresolved').innerHTML = `${fmt(globalSums.unresolved)} <span class="text-sm text-stone-500 font-normal">MAS</span>`;
-
     document.getElementById('resDirectTag').textContent = `${fmt(directMas)} MAS`;
-    document.getElementById('resDeepTag').textContent = `${fmt(Math.max(0, resolvedMas - directMas))} MAS`;
+    document.getElementById('resDeepTag').textContent   = `${fmt(Math.max(0, resolvedMas - directMas))} MAS`;
 
-    const oldestTag = document.getElementById('resOldestTag');
-    if (oldestTxTime !== Infinity && oldestTxTime > 0) {
-        const d = new Date(oldestTxTime);
-        oldestTag.textContent = d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
-    } else {
-        oldestTag.textContent = '—';
-    }
+    if (oldestTxTime !== Infinity && oldestTxTime > 0)
+        document.getElementById('resOldestTag').textContent =
+            new Date(oldestTxTime).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 
     const kList = document.getElementById('knownList');
-    kList.innerHTML = Object.entries(globalSums.known).sort((a, b) => b[1] - a[1]).map(([k, v]) => 
+    kList.innerHTML = Object.entries(globalSums.known).sort((a, b) => b[1] - a[1]).map(([k, v]) =>
         `<div class="p-2 rounded flex justify-between border border-stone-700 bg-stone-800"><span class="text-blue-400 truncate mr-2">${k}</span><b class="text-stone-200 shrink-0">${fmt(v)}</b></div>`
     ).join('') || '<span class="text-stone-500 italic text-xs">None found yet…</span>';
 
     const uList = document.getElementById('unidentifiedList');
     uList.innerHTML = Object.entries(globalSums.unknown).sort((a, b) => b[1] - a[1]).map(([k, v]) =>
-        `<div onclick="selectAndTrace('${k}')" title="Trace ${k}" class="p-2 rounded flex justify-between cursor-pointer hover:bg-stone-700 hover:ring-1 hover:ring-orange-500 transition border border-stone-800 bg-stone-900"><span class="text-orange-400 hover:text-white underline decoration-orange-400/50 truncate mr-2">${k.substring(0,18)}…${k.slice(-6)}</span><b class="text-stone-200 shrink-0">${fmt(v)}</b></div>`
+        `<div onclick="selectAndTrace('${k}')" title="Trace ${k}" class="p-2 rounded flex justify-between cursor-pointer hover:bg-stone-700 hover:ring-1 hover:ring-orange-500 transition border border-stone-800 bg-stone-900"><span class="text-orange-400 hover:text-white underline decoration-orange-400/50 truncate mr-2">${k.substring(0, 18)}…${k.slice(-6)}</span><b class="text-stone-200 shrink-0">${fmt(v)}</b></div>`
     ).join('') || '<span class="text-stone-500 italic text-xs">None found yet…</span>';
 }
 
-// --- TRACING ENGINE ---
-
+// ─── RECURSIVE TRACE ENGINE ───────────────────────────────────────────────────
 async function recursiveTrace(address, targetAmount, depth, maxDepth, minMas) {
     if (!isTracing) return { label: address, amount: targetAmount, type: 'unresolved', info: 'Trace Aborted' };
-    if (globalVisited.has(address)) { return { label: address, amount: targetAmount, type: 'cycle', info: 'Loop Blocked' }; }
-    
+    if (globalVisited.has(address)) return { label: address, amount: targetAmount, type: 'cycle', info: 'Loop Blocked' };
+
     if (depth > maxDepth || targetAmount < minMas) {
         globalSums.unknown[address] = (globalSums.unknown[address] || 0) + targetAmount;
         resolvedMas += targetAmount; updateProgressBar();
-        return { label: address, amount: targetAmount, type: 'unidentified', info: depth > maxDepth ? `Max Depth Limit` : `Below Min MAS`, isAddress: true };
+        return { label: address, amount: targetAmount, type: 'unidentified',
+                 info: depth > maxDepth ? 'Max Depth Limit' : 'Below Min MAS', isAddress: true };
     }
 
-    globalVisited.add(address); eng.nodes++; refreshStats();
-    
-    const analysis = await analyseAddress(address);
-    let scale = 1.0, gapMas = 0.0;
+    globalVisited.add(address);
+    eng.nodes++; refreshStats();
 
-    if (!isTracing || analysis.netInflow <= 0) {
+    // analyseAddress has NODE_TIMEOUT baked in — will never hang
+    const analysis = await analyseAddress(address);
+    if (!isTracing) return { label: address, amount: targetAmount, type: 'unresolved', info: 'Trace Aborted' };
+
+    let scale = 1.0, gapMas = 0.0;
+    if (!analysis || analysis.netInflow <= 0) {
         globalSums.staking += targetAmount; resolvedMas += targetAmount; updateProgressBar();
         if (depth === 1) directMas += targetAmount;
-        return { label: "⛏ Staking Rewards", amount: targetAmount, type: 'staking', info: "Or Genesis Gap", isAddress: false };
+        return { label: '⛏ Staking Rewards', amount: targetAmount, type: 'staking', info: 'Or Genesis Gap', isAddress: false };
     }
 
-    if (analysis.netInflow > targetAmount * 1.0001) scale = targetAmount / analysis.netInflow;
+    if (analysis.netInflow > targetAmount * 1.0001)    scale   = targetAmount / analysis.netInflow;
     else if (analysis.netInflow < targetAmount * 0.9999) gapMas = targetAmount - analysis.netInflow;
 
     let children = [];
 
     for (const [name, mas] of Object.entries(analysis.knownMas)) {
         const scaled = mas * scale; if (scaled < 0.01) continue;
-        globalSums.known[name] = (globalSums.known[name] || 0) + scaled; resolvedMas += scaled;
+        globalSums.known[name] = (globalSums.known[name] || 0) + scaled;
+        resolvedMas += scaled;
         if (depth === 1) directMas += scaled;
-        
-        let dateStr = analysis.senderDates[name] ? new Date(analysis.senderDates[name]).toLocaleDateString(undefined, {month:'short', day:'numeric', year:'numeric'}) : 'Exchange';
+        const dateStr = analysis.senderDates[name]
+            ? new Date(analysis.senderDates[name]).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+            : 'Exchange';
         children.push({ label: `🏦 ${name}`, amount: scaled, type: 'known', info: dateStr, isAddress: false });
     }
 
@@ -488,141 +566,241 @@ async function recursiveTrace(address, targetAmount, depth, maxDepth, minMas) {
 
     for (const [sAddr, sMas] of senders) {
         const scaled = sMas * scale; if (scaled < 0.01) continue;
-
-        let dateStr = analysis.senderDates[sAddr] ? new Date(analysis.senderDates[sAddr]).toLocaleDateString(undefined, {month:'short', day:'numeric', year:'numeric'}) : 'Intermediary';
+        const dateStr = analysis.senderDates[sAddr]
+            ? new Date(analysis.senderDates[sAddr]).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+            : 'Intermediary';
 
         if (KNOWN_WALLETS[sAddr]) {
-            const name = KNOWN_WALLETS[sAddr]; globalSums.known[name] = (globalSums.known[name] || 0) + scaled; resolvedMas += scaled;
+            const name = KNOWN_WALLETS[sAddr];
+            globalSums.known[name] = (globalSums.known[name] || 0) + scaled;
+            resolvedMas += scaled;
             if (depth === 1) directMas += scaled;
             children.push({ label: `🏦 ${name}`, amount: scaled, type: 'known', info: dateStr, isAddress: false });
         } else if (scaled >= minMas && depth < maxDepth && isTracing) {
+            eng.queue++; refreshStats();
             recurseTasks.push({ addr: sAddr, amount: scaled, dateStr });
         } else {
-            globalSums.unknown[sAddr] = (globalSums.unknown[sAddr] || 0) + scaled; resolvedMas += scaled;
+            globalSums.unknown[sAddr] = (globalSums.unknown[sAddr] || 0) + scaled;
+            resolvedMas += scaled;
             if (depth === 1) directMas += scaled;
-            children.push({ label: sAddr, amount: scaled, type: 'unidentified', info: depth >= maxDepth ? 'Max Depth Limit' : dateStr, isAddress: true });
+            children.push({ label: sAddr, amount: scaled, type: 'unidentified',
+                            info: depth >= maxDepth ? 'Max Depth Limit' : dateStr, isAddress: true });
         }
     }
 
-    for (let i = 0; i < recurseTasks.length; i += CONCURRENCY) {
+    // Process in batches with concurrency limit + hard batch timeout
+    for (let i = 0; i < recurseTasks.length; i += CFG.CONCURRENCY) {
         if (!isTracing) break;
-        const batch = recurseTasks.slice(i, i + CONCURRENCY);
-        const results = await Promise.all(batch.map(({ addr, amount, dateStr }) => recursiveTrace(addr, amount, depth + 1, maxDepth, minMas).then(res => {
-            if (res.type === 'unidentified' && res.info.includes('Below Min MAS')) res.info = dateStr;
-            return res;
-        })));
-        children.push(...results); updateProgressBar();
+        const batch = recurseTasks.slice(i, i + CFG.CONCURRENCY);
+        eng.queue = Math.max(0, eng.queue - batch.length); refreshStats();
+
+        const batchPromises = batch.map(({ addr, amount, dateStr }) =>
+            recursiveTrace(addr, amount, depth + 1, maxDepth, minMas).then(res => {
+                if (res.type === 'unidentified' && res.info === 'Below Min MAS') res.info = dateStr;
+                return res;
+            })
+        );
+
+        // Hard timeout — unblocks even if a child silently hangs
+        const results = await withTimeout(
+            Promise.all(batchPromises),
+            CFG.BATCH_TIMEOUT_MS,
+            batch.map(({ addr, amount }) => {
+                globalSums.unknown[addr] = (globalSums.unknown[addr] || 0) + amount;
+                resolvedMas += amount;
+                return { label: addr, amount, type: 'unresolved', info: 'Batch Timeout', isAddress: true };
+            }),
+            `batch@depth${depth}`
+        );
+
+        children.push(...results);
+        updateProgressBar();
     }
 
     children.sort((a, b) => b.amount - a.amount);
-    return { label: address, amount: targetAmount, type: depth === 1 ? 'root' : 'node', info: depth === 1 ? 'Target' : 'Intermediary', isAddress: !KNOWN_WALLETS[address], children: children.length ? children : null };
+    return {
+        label: address, amount: targetAmount,
+        type: depth === 1 ? 'root' : 'node',
+        info: depth === 1 ? 'Target' : 'Intermediary',
+        isAddress: !KNOWN_WALLETS[address],
+        children: children.length ? children : null
+    };
 }
 
+// ─── TREE RENDERER ────────────────────────────────────────────────────────────
+function buildTreeHTML(node, isRoot = false) {
+    if (!node) return '';
+    const masStr = `${fmt(node.amount)} MAS`;
+
+    let labelHtml = `<span class="text-${node.type} truncate mr-4 font-bold">${node.label}</span>`;
+    if (node.isAddress) {
+        labelHtml = `<span onclick="selectAndTrace('${node.label}')" title="Click to Trace" class="cursor-pointer text-orange-400 hover:text-white underline decoration-orange-500/30 hover:decoration-white transition-all truncate pr-4">${node.label}</span>`;
+    }
+
+    if (!node.children || !node.children.length) {
+        return `<div class="leaf-node"><div class="flex items-center truncate mr-4">${labelHtml}</div><div class="flex space-x-4 shrink-0 text-right"><span class="text-stone-500 w-36 text-xs self-center">${node.info || ''}</span><span class="text-stone-100 font-bold w-28">${masStr}</span></div></div>`;
+    }
+    return `<details ${isRoot ? 'open' : ''}>
+        <summary>
+            <div class="flex items-center truncate mr-4 overflow-hidden"><span class="node-caret"></span>${labelHtml}</div>
+            <div class="flex space-x-4 shrink-0 text-right"><span class="text-stone-500 w-36 text-xs self-center">${node.info || ''}</span><span class="text-stone-100 font-bold w-28">${masStr}</span></div>
+        </summary>
+        ${node.children.map(c => buildTreeHTML(c)).join('')}
+    </details>`;
+}
+
+// ─── NAVIGATION ───────────────────────────────────────────────────────────────
+function manualTrace() { historyStack = []; isHistoricalMode = false; startTrace(); }
+
+function selectAndTrace(address) {
+    if (KNOWN_WALLETS[address]) { copyToClipboard(address); return; }
+    const cur = document.getElementById('addrInput').value.trim();
+    if (cur && cur !== address) historyStack.push({ addr: cur, isHist: isHistoricalMode });
+    document.getElementById('addrInput').value = address;
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    startTrace();
+}
+
+function goBack() {
+    if (!historyStack.length || isTracing) return;
+    const prev = historyStack.pop();
+    document.getElementById('addrInput').value = prev.addr;
+    isHistoricalMode = prev.isHist;
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    startTrace();
+}
+
+function stopTrace() {
+    if (!isTracing) return;
+    isTracing = false;
+    if (sessionAbort) sessionAbort.abort(); // cancel all in-flight fetches immediately
+    log('⏹ Trace stopped by user', 'log-warn');
+    document.getElementById('btnStop').disabled = true;
+    document.getElementById('btnStop').classList.add('opacity-50', 'cursor-not-allowed');
+}
+
+// ─── MAIN TRACE ───────────────────────────────────────────────────────────────
 async function startTrace(forceHistory = false) {
     if (isTracing) return;
     const addr = document.getElementById('addrInput').value.trim();
     if (!addr.startsWith('AU') && !addr.startsWith('AS')) return alert('Invalid Massa address');
 
+    sessionAbort = new AbortController();
+
     const btnBack = document.getElementById('btnBack');
-    if (historyStack.length > 0) {
+    if (historyStack.length) {
         btnBack.classList.remove('hidden');
-        btnBack.innerText = `← Back to ${historyStack[historyStack.length - 1].addr.substring(0,8)}...`;
+        btnBack.innerText = `← Back to ${historyStack[historyStack.length - 1].addr.substring(0, 8)}...`;
     } else btnBack.classList.add('hidden');
 
     isTracing = true;
     if (forceHistory) isHistoricalMode = true;
-    
+
     globalVisited = new Set(); analysisCache = new Map();
     globalSums = { staking: 0, known: {}, unknown: {}, unresolved: 0 };
-    eng = { nodes: 0, retries: 0 }; resolvedMas = 0; traceStart = Date.now();
-    
-    directMas = 0;
-    rootAddress = addr;
-    oldestTxTime = Infinity;
-    
-    ['resultsWrapper', 'zeroBalancePrompt', 'mainResultsBox', 'btnTrace', 'txHistoryBox'].forEach(id => document.getElementById(id).classList.add('hidden'));
+    eng = { nodes: 0, retries: 0, timeouts: 0, queue: 0 };
+    resolvedMas = 0; traceStart = Date.now();
+    directMas = 0; rootAddress = addr; oldestTxTime = Infinity;
+    currentTransfers = []; currentTxFilter = 'all'; currentTxLimit = 15;
+
+    ['resultsWrapper', 'zeroBalancePrompt', 'mainResultsBox', 'txHistoryBox'].forEach(id =>
+        document.getElementById(id).classList.add('hidden'));
+    document.getElementById('btnTrace').classList.add('hidden');
     document.getElementById('loader').classList.remove('hidden');
-    document.getElementById('btnStop').classList.remove('hidden', 'opacity-50', 'cursor-not-allowed');
-    document.getElementById('btnStop').disabled = false;
-    
+    const stopBtn = document.getElementById('btnStop');
+    stopBtn.classList.remove('hidden', 'opacity-50', 'cursor-not-allowed');
+    stopBtn.disabled = false;
+    document.getElementById('debugLog').innerHTML = '';
+    document.getElementById('progressBarFill').style.width = '0%';
+    document.getElementById('progressText').textContent = '0%';
+
+    ['fltIn', 'fltOut'].forEach(id =>
+        document.getElementById(id).className = 'px-3 py-1 rounded bg-stone-800 text-stone-400 hover:bg-stone-700 transition-colors');
+    document.getElementById('fltAll').className = 'px-3 py-1 rounded bg-orange-600 text-white transition-colors';
+
     clearInterval(elapsedTimer);
-    elapsedTimer = setInterval(() => { document.getElementById('sElapsed').textContent = `${((Date.now() - traceStart) / 1000).toFixed(0)}s`; }, 500);
+    elapsedTimer = setInterval(() => {
+        document.getElementById('sElapsed').textContent = `${((Date.now() - traceStart) / 1000).toFixed(0)}s`;
+    }, 500);
 
     try {
+        log('Connecting to Massa RPC…');
         const addrData = await fetchMassaRPC("get_addresses", [[addr]]);
-        if (!addrData || !addrData[0]) throw new Error("Wallet not found");
+        if (!addrData || !addrData[0]) throw new Error("Wallet not found on-chain");
 
-        const d = addrData[0];
-        const liquid = parseFloat(d.final_balance || "0"), rolls = parseInt(d.final_roll_count || "0"); 
-        let currentBalance = liquid + (rolls * MAS_PER_ROLL);
+        const d       = addrData[0];
+        const liquid  = parseFloat(d.final_balance || "0");
+        const rolls   = parseInt(d.final_roll_count || "0");
+        const balance = liquid + (rolls * CFG.MAS_PER_ROLL);
 
-        document.getElementById('resLiquidTag').innerText = liquid.toLocaleString(undefined, {maximumFractionDigits: 2});
-        document.getElementById('resRollsTag').innerText = rolls.toLocaleString();
+        document.getElementById('resLiquidTag').innerText = liquid.toLocaleString(undefined, { maximumFractionDigits: 2 });
+        document.getElementById('resRollsTag').innerText  = rolls.toLocaleString();
+
+        log(`Wallet found: ${fmt(liquid)} liquid + ${rolls} rolls`, 'log-ok');
+        log('Fetching transfer history…');
 
         const rootAnalysis = await analyseAddress(addr);
+        currentTransfers = rootAnalysis.allTransfers;
 
-        if (currentBalance === 0 && !isHistoricalMode) {
+        if (balance === 0 && !isHistoricalMode) {
             isTracing = false; clearInterval(elapsedTimer);
-            ['loader', 'btnStop'].forEach(id => document.getElementById(id).classList.add('hidden'));
-            ['btnTrace', 'resultsWrapper', 'zeroBalancePrompt'].forEach(id => document.getElementById(id).classList.remove('hidden'));
-            renderHistoryTable(rootAnalysis.allTransfers, addr);
+            document.getElementById('loader').classList.add('hidden');
+            stopBtn.classList.add('hidden');
+            document.getElementById('btnTrace').classList.remove('hidden');
+            document.getElementById('resultsWrapper').classList.remove('hidden');
+            document.getElementById('zeroBalancePrompt').classList.remove('hidden');
+            renderHistoryTable();
             return;
         }
 
         if (isHistoricalMode) {
             totalTarget = rootAnalysis.netInflow;
             document.getElementById('resTargetLabel').innerText = "Historical Total Received";
-            if (totalTarget === 0) { 
-                finalise(null, "Wallet has zero incoming transfer history."); 
-                renderHistoryTable(rootAnalysis.allTransfers, addr);
-                return; 
-            }
+            if (totalTarget === 0) { finalise(null, "Wallet has zero incoming transfer history."); renderHistoryTable(); return; }
         } else {
-            totalTarget = currentBalance;
+            totalTarget = balance;
             document.getElementById('resTargetLabel').innerText = "Total Effective Assets (Liquid + Rolls)";
         }
 
-        document.getElementById('resTotalBalance').innerHTML = `${fmt(totalTarget)} <span class="text-xl md:text-2xl text-stone-400 font-normal">MAS</span>`;
-        document.getElementById('treeContainer').innerHTML = '<div class="text-orange-500 animate-pulse py-6 font-mono">Building trace hierarchy…</div>';
-        
+        document.getElementById('resTotalBalance').innerHTML =
+            `${fmt(totalTarget)} <span class="text-xl md:text-2xl text-stone-400 font-normal">MAS</span>`;
+        document.getElementById('treeContainer').innerHTML =
+            '<div class="text-orange-500 animate-pulse py-6 font-mono">Building trace hierarchy…</div>';
+
         document.getElementById('resultsWrapper').classList.remove('hidden');
         document.getElementById('mainResultsBox').classList.remove('hidden');
+        renderHistoryTable();
 
-        renderHistoryTable(rootAnalysis.allTransfers, addr);
-
-        // MAX_TRACE_DEPTH and MIN_MAS_TO_TRACE are now hardcoded variables pulled from the config!
-        const rootTree = await recursiveTrace(addr, totalTarget, 1, MAX_TRACE_DEPTH, MIN_MAS_TO_TRACE);
+        log(`Starting recursive trace (depth=${CFG.MAX_DEPTH}, min=${CFG.MIN_MAS} MAS)…`, 'log-ok');
+        const rootTree = await recursiveTrace(addr, totalTarget, 1, CFG.MAX_DEPTH, CFG.MIN_MAS);
         finalise(rootTree);
-    } catch (err) { finalise(null, `Error: ${err.message}`); }
+    } catch (err) {
+        log(`Error: ${err.message}`, 'log-err');
+        finalise(null, `Error: ${err.message}`);
+    }
 }
 
 function finalise(tree, customMsg = null) {
-    isTracing = false; clearInterval(elapsedTimer);
+    isTracing = false;
+    clearInterval(elapsedTimer);
     document.getElementById('loader').classList.add('hidden');
     document.getElementById('btnStop').classList.add('hidden');
     document.getElementById('btnTrace').classList.remove('hidden');
-    if (tree || customMsg) {
-        document.getElementById('treeContainer').innerHTML = tree ? buildTreeHTML(tree, true) : `<div class="text-red-500 py-6 font-mono font-bold">${customMsg}</div>`;
+    if (tree) {
+        document.getElementById('treeContainer').innerHTML = buildTreeHTML(tree, true);
+    } else if (customMsg) {
+        document.getElementById('treeContainer').innerHTML = `<div class="text-red-500 py-6 font-mono font-bold">${customMsg}</div>`;
     }
     updateProgressBar();
+    log('Trace complete ✓', 'log-ok');
 }
 
-function buildTreeHTML(node, isRoot = false) {
-    if (!node) return '';
-    const masStr = `${fmt(node.amount)} MAS`;
-    
-    let labelHtml = `<span class="text-${node.type} truncate mr-4 font-bold">${node.label}</span>`;
-    if (node.isAddress) {
-        labelHtml = `<span onclick="selectAndTrace('${node.label}')" title="Click to Trace" class="cursor-pointer text-orange-400 hover:text-white underline decoration-orange-500/30 hover:decoration-white transition-all truncate pr-4">${node.label}</span>`;
-    }
-
-    if (!node.children || node.children.length === 0) {
-        return `<div class="leaf-node"><div class="flex items-center truncate mr-4">${labelHtml}</div><div class="flex space-x-4 shrink-0 text-right"><span class="text-stone-500 w-36 text-xs self-center">${node.info}</span><span class="text-stone-100 font-bold w-28">${masStr}</span></div></div>`;
-    }
-    return `<details ${isRoot ? 'open' : ''}><summary><div class="flex items-center truncate mr-4 overflow-hidden"><span class="node-caret"></span>${labelHtml}</div><div class="flex space-x-4 shrink-0 text-right"><span class="text-stone-500 w-36 text-xs self-center">${node.info}</span><span class="text-stone-100 font-bold w-28">${masStr}</span></div></summary>${node.children.map(c => buildTreeHTML(c)).join('')}</details>`;
-}
-
-fetchMassaRPC("get_status").catch(()=>{});
+// Init
+fetchMassaRPC("get_status").catch(() => {
+    const el = document.getElementById('nodeStatus');
+    el.textContent = 'OFFLINE';
+    el.className = 'px-3 py-1 rounded-full bg-stone-800 text-[10px] font-bold text-red-400 border border-red-800';
+});
 </script>
 </body>
 </html>
